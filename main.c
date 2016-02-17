@@ -34,6 +34,22 @@ typedef struct msg
 #define MSG_SIZE sizeof(msg_t)
 
 
+#define NB_USER 100
+#define NICK_DEFAULT "Guest"
+#define COLOR_DEFAULT (colors[0].name)
+#define NICK_LEN 256
+#define NODE_INFO_LEN 256
+typedef struct user
+{
+    struct sockaddr_in      sa;
+    char                    nick[NICK_LEN];
+    char                    node_info[NODE_INFO_LEN];
+    const char             *color;
+} user_t;
+
+user_t users[NB_USER];
+int user_online = 0;
+
 
 
 /***** GLOBAL VARIABLES *****/
@@ -49,6 +65,11 @@ struct sockaddr bcast_addr;
 int init_bcast(struct sockaddr *bcast_addr);
 msg_t *get_buf(msg_type_t type);
 void free_buf(msg_t *buf);
+user_t *add_user(struct sockaddr_in *sa);
+void get_node_info(user_t *user, struct sockaddr_in *si);
+void del_user(user_t *user);
+user_t *lookup_user(struct sockaddr_in *sa);
+void show_users();
 
 
 
@@ -113,4 +134,76 @@ msg_t *get_buf(msg_type_t type)
 void free_buf(msg_t *buf)
 {
     free(buf);
+}
+
+user_t *add_user(struct sockaddr_in *sa)
+{
+	user_t *user = NULL;
+	
+	user = malloc(sizeof(user_t));
+	if (user != NULL)
+	{
+		user->sa = *sa;
+		strncpy(user->nick, NICK_DEFAULT, NICK_LEN);
+		get_node_info(user, sa);
+		//user.color = COLOR_DEFAULT;
+	
+		users[user_online] = *user;
+		user_online++;
+	}
+	else
+		printf("ERREUR : Allocation utilisateur échouée\n");
+	
+	return user;
+}
+
+void get_node_info(user_t *user, struct sockaddr_in *sa)
+{
+	int port = sa->sin_port;
+	char *ip = inet_ntoa(sa->sin_addr);
+	sprintf(user->node_info, "%d", port);
+	strcat(user->node_info, ":");
+	strcat(user->node_info, ip);
+}
+
+void del_user(user_t *user)
+{
+	int i;
+	int supprimer = 0;
+	for(i=0 ; i < user_online-1 ; i++)
+	{
+		if (supprimer == 0 && memcmp(&(&users[i])->sa, &user->sa, sizeof(struct sockaddr_in)) == 0)
+			supprimer = 1;
+		if (supprimer == 1)		
+			users[i] = users[i+1];
+	}
+	user_t empty;
+	users[user_online-1] = empty;
+	user_online--;
+}
+
+user_t *lookup_user(struct sockaddr_in *sa)
+{
+	user_t *user = NULL;
+	int i;
+    for(i=0 ; i < user_online-1 ; i++)
+	{
+		if (memcmp(&(&users[i])->sa, &sa, sizeof(struct sockaddr_in)) == 0)
+		{
+			user = &(user[i]);
+			return user;
+		}
+	}
+    return user;
+}
+
+void show_users()
+{
+	int i;
+    for(i=0 ; i < user_online-1 ; i++)
+	{
+		printf("User %s\n", users[i].nick);
+		printf("\tUsing color %s\n", users[i].color);
+		printf("\tConnected with %s\n", users[i].node_info);
+	}
 }
