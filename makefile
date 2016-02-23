@@ -1,2 +1,2 @@
 all:
-	gcc main.c -o discussion
+	gcc main.c -o discussion -lpthread

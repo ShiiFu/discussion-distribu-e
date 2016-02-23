@@ -10,8 +10,11 @@
 #include <pthread.h>
 #include <netdb.h>
 
-#define BCAST_ADDR "192.168.10.255"	// ou #define BCAST_ADDR (192<<24+168<<16+3<<8+255) puis htons(BCAST_ADDR)
-#define BCAST_PORT 1234
+//#define BCAST_ADDR "192.168.10.255"	// ou #define BCAST_ADDR (192<<24+168<<16+3<<8+255) puis htons(BCAST_ADDR)
+//#define BCAST_PORT 1234
+
+#define BCAST_ADDR "192.168.1.255"	// ou #define BCAST_ADDR (192<<24+168<<16+3<<8+255) puis htons(BCAST_ADDR)
+#define BCAST_PORT 5000
 
 
 typedef enum msg_type
@@ -56,6 +59,7 @@ int user_online = 0;
 
 int bcast_sock = -1;
 struct sockaddr bcast_addr;
+struct sockaddr_in bcast_addr_in;
 
 
 
@@ -70,6 +74,10 @@ void get_node_info(user_t *user, struct sockaddr_in *si);
 void del_user(user_t *user);
 user_t *lookup_user(struct sockaddr_in *sa);
 void show_users();
+void *receive_thread(void *arg);
+void process_received_msg(user_t *user, msg_t *msg);
+void send_msg(msg_t *data, size_t data_len);
+void enter_loop(void);
 
 
 
@@ -78,9 +86,19 @@ void show_users();
 
 int main (int argc, char **argv)
 {
-	printf("Hello world !\n");
+	printf("Bienvenue, vous pouvez discutez avec les personnes connectées sur le réseau !\n");
 	
+	pthread_t receive_th;
+	int rc;
+
 	bcast_sock = init_bcast(&bcast_addr);
+
+    rc = pthread_create(&receive_th, NULL, receive_thread, NULL);
+    if (rc < 0)
+    	printf("Cannot create receive thread\n");
+
+    enter_loop();
+
 	
 	return 0;
 }
@@ -92,41 +110,34 @@ int main (int argc, char **argv)
 
 int init_bcast(struct sockaddr *bcast_addr)
 {
-	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-	
-	int sock = -1;
-	sock = bind(sockfd, bcast_addr, sizeof(struct sockaddr));
-	int broadcastPermission = 1;
-	setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (void *) &broadcastPermission, sizeof(broadcastPermission));
-	
-	if (sock == -1)
-		printf("Erreur init_bcast\n");
-	
-	
+	int sockfd;
+	struct sockaddr_in broadcastAddr;
+	int broadcastPermission;
+
+	if ((sockfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+        perror("socket() failed");
+
+    broadcastPermission = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (void *) &broadcastPermission, sizeof(broadcastPermission)) < 0)
+        perror("setsockopt() failed");
+
+    memset(&broadcastAddr, 0, sizeof(broadcastAddr));
+    broadcastAddr.sin_family = AF_INET;
+    broadcastAddr.sin_addr.s_addr = inet_addr(BCAST_ADDR);
+    broadcastAddr.sin_port = htons(BCAST_PORT);
+
+    if (bind(sockfd, (struct sockaddr *) &broadcastAddr, sizeof(broadcastAddr)) < 0)
+        perror("bind() failed");
+
+    bcast_addr = (struct sockaddr *) &broadcastAddr;
+    bcast_addr_in = broadcastAddr;
 	return sockfd;
 }
 
 msg_t *get_buf(msg_type_t type)
 {
-    msg_t *msg = NULL;
-
-    char* buffer = malloc((BUF_SIZE + 1) * sizeof(char));
-    int byteRead;
-    int i = 0;
-	while((byteRead = recv(bcast_sock, buffer, BUF_SIZE, 0)) > 0)
-	{
-		if(byteRead <= 0)
-		    break;
-		else {
-		    msg->buf[i] = *buffer;
-		    //printf("%s", buffer);
-		}
-		i++;
-	}
-	msg->buf[i+1] = '\0';
-	
+    msg_t *msg = malloc(MSG_SIZE);
 	msg->type = type;
-	msg->len = i+1;
 
     return msg;
 }
@@ -206,4 +217,84 @@ void show_users()
 		printf("\tUsing color %s\n", users[i].color);
 		printf("\tConnected with %s\n", users[i].node_info);
 	}
+}
+
+void *receive_thread(void *arg)
+{
+	while (1)
+    {
+        struct sockaddr_in sender_addr;
+        unsigned int addrlen = sizeof(sender_addr);
+        user_t *sender = NULL;
+        void *data = malloc(MSG_SIZE);
+        msg_t *msg = get_buf(MT_INVAL);
+
+		if((recvfrom(bcast_sock, data, MSG_SIZE, 0, (struct sockaddr *) &sender_addr, &addrlen)) != MSG_SIZE)
+			printf("Erreur de reception %d\n", errno);
+		else
+		{
+			sender = lookup_user(&sender_addr);
+			if (sender == NULL)
+				sender = add_user(&sender_addr);
+
+			process_received_msg(sender, (msg_t*) data);
+		}
+    }
+    return NULL;
+}
+
+void process_received_msg(user_t *user, msg_t *msg)
+{
+    switch(msg->type)
+    {
+        case MT_HELLO:
+            {
+                printf("%d\n", msg->type);
+            }
+            break;
+
+        case MT_NICK:
+            {
+                printf("%d\n", msg->type);
+            }
+            break;
+
+        case MT_MSG:
+            {
+                printf("%s : %d : %s", inet_ntoa(user->sa.sin_addr), msg->type, msg->buf);
+            }
+            break;
+
+        case MT_COLOR:
+            {
+                printf("%d\n", msg->type);
+            }
+            break;
+
+        default:
+            perror("Invalid message type");
+            break;
+    }
+}
+
+void send_msg(msg_t *data, size_t data_len)
+{
+    if(sendto(bcast_sock, data, data_len, 0, (struct sockaddr *) &bcast_addr_in, sizeof(bcast_addr_in)) != MSG_SIZE)
+    	printf("Erreur %d lors de l'envoie du message\n", errno);
+}
+
+void enter_loop(void)
+{
+    while (1)
+    {
+        char str[BUF_SIZE];
+
+        fgets(str, BUF_SIZE, stdin);
+
+        msg_t * msg = get_buf(MT_MSG);
+		msg->len = BUF_SIZE;
+		strncpy(msg->buf, str, BUF_SIZE);
+        send_msg(msg, MSG_SIZE);
+        free_buf(msg);
+    }
 }
