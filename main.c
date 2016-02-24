@@ -15,7 +15,7 @@
 //#define BCAST_ADDR "192.168.10.255"	// ou #define BCAST_ADDR (192<<24+168<<16+3<<8+255) puis htons(BCAST_ADDR)
 //#define BCAST_PORT 1234
 
-#define BCAST_ADDR "127.0.0.1"	// ou #define BCAST_ADDR (192<<24+168<<16+3<<8+255) puis htons(BCAST_ADDR)
+#define BCAST_ADDR "192.168.1.255"	// ou #define BCAST_ADDR (192<<24+168<<16+3<<8+255) puis htons(BCAST_ADDR)
 #define BCAST_PORT 5000
 
 
@@ -26,6 +26,7 @@ typedef enum msg_type
     MT_MSG   = 2,
     MT_NICK  = 3,
     MT_COLOR = 4,
+    MT_EXIT = 5,
     MT_MAX,
 } msg_type_t;
 
@@ -54,15 +55,15 @@ typedef struct user
     int                     last_msg;
 } user_t;
 
-TAILQ_HEAD(mylist, user) users_list;
-
 
 
 /***** GLOBAL VARIABLES *****/
 
+TAILQ_HEAD(mylist, user) users_list;
 int bcast_sock = -1;
 struct sockaddr bcast_addr;
 struct sockaddr_in bcast_addr_in;
+bool continuer = true;
 
 
 
@@ -188,7 +189,6 @@ void get_node_info(user_t *user, struct sockaddr_in *sa)
 
 void del_user(user_t *user)
 {
-    printf("%s disconnected\n", user->nick);
 	TAILQ_REMOVE(&users_list, user, lh);
 }
 
@@ -219,7 +219,7 @@ void show_users()
 
 void *receive_thread(void *arg)
 {
-	while (1)
+	while (continuer)
     {
         struct sockaddr_in sender_addr;
         unsigned int addrlen = sizeof(sender_addr);
@@ -285,6 +285,13 @@ void process_received_msg(user_t *user, msg_t *msg)
             }
             break;
 
+        case MT_EXIT:
+            {
+                del_user(user);
+            	printf("%s disconnected (by user)\n", user->nick);
+            }
+            break;
+
         default:
             perror("Invalid message type");
             break;
@@ -299,7 +306,7 @@ void send_msg(msg_t *data, size_t data_len)
 
 void enter_loop(void)
 {
-    while (1)
+    while (continuer)
     {
         char str[BUF_SIZE];
 
@@ -322,6 +329,17 @@ void enter_loop(void)
         {
             switch(str[1])
             {
+            	case 'e':
+                    {
+                        msg_t * msg = get_buf(MT_EXIT);
+                        msg->len = BUF_SIZE;
+                        strncpy(msg->buf, "exit message", BUF_SIZE);
+                        send_msg(msg, MSG_SIZE);
+                        free_buf(msg);
+                        continuer = false;
+                    }
+                    break;
+
                 case 'n':
                     {
                         msg_t * msg = get_buf(MT_NICK);
@@ -353,8 +371,9 @@ void enter_loop(void)
                 default:
                     printf("Commande inconnue\n");
                     printf("Commandes disponibles : \n");
+                    printf("/e : Pour se déconnecter\n");
                     printf("/n <pseudonyme> : change le pseudonyme de l'utilisateur\n");
-                    printf("/c <couleur> : change la couleur de l'utilisateur\n");
+                    printf("/c <couleur>[30-37] : change la couleur de l'utilisateur\n");
                     printf("/s : show users\n");
                     break;
             }
@@ -364,7 +383,7 @@ void enter_loop(void)
 
 void *hello_thread(void *args)
 {
-    while (1)
+    while (continuer)
     {
         msg_t * msg = get_buf(MT_HELLO);
 		msg->len = BUF_SIZE;
@@ -384,6 +403,9 @@ void free_user()
     TAILQ_FOREACH(user, &users_list, lh)
     {
         if ((int)time(NULL)-user->last_msg > 60)
+        {
             del_user(user);
+            printf("%s disconnected (timeout)\n", user->nick);
+        }
     }
 }
