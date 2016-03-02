@@ -12,9 +12,6 @@
 
 #include "sys/queue.h"
 
-//#define BCAST_ADDR "192.168.10.255"	// ou #define BCAST_ADDR (192<<24+168<<16+3<<8+255) puis htons(BCAST_ADDR)
-//#define BCAST_PORT 1234
-
 #define BCAST_ADDR "192.168.1.255"	// ou #define BCAST_ADDR (192<<24+168<<16+3<<8+255) puis htons(BCAST_ADDR)
 #define BCAST_PORT 5000
 
@@ -26,7 +23,7 @@ typedef enum msg_type
     MT_MSG   = 2,
     MT_NICK  = 3,
     MT_COLOR = 4,
-    MT_EXIT = 5,
+    MT_EXIT = 5,	// Message pour la déconnexion
     MT_MAX,
 } msg_type_t;
 
@@ -52,7 +49,7 @@ typedef struct user
     char                    nick[NICK_LEN];
     char                    node_info[NODE_INFO_LEN];
     int                     color;
-    int                     last_msg;
+    int                     last_msg;	// Timestamp du dernier message reçu de l'utilisateur, utile pour vérifier un timeout.
 } user_t;
 
 
@@ -94,6 +91,7 @@ int main (int argc, char **argv)
 {
     printf("\x1B[0mBienvenue, vous pouvez discutez avec les personnes connectées sur le réseau !\n");
 	
+	// Initialisation de la socket et des threads
 	pthread_t receive_th;
 	pthread_t hello_th;
 	int rc;
@@ -121,6 +119,7 @@ int main (int argc, char **argv)
 
 /***** FONCTIONS *****/
 
+// Initialise la socket
 int init_bcast(struct sockaddr *bcast_addr)
 {
 	int sockfd;
@@ -147,6 +146,7 @@ int init_bcast(struct sockaddr *bcast_addr)
 	return sockfd;
 }
 
+// Initialise un pointeur sur une structure msg_t
 msg_t *get_buf(msg_type_t type)
 {
     msg_t *msg = malloc(MSG_SIZE);
@@ -155,11 +155,13 @@ msg_t *get_buf(msg_type_t type)
     return msg;
 }
 
+// Libère un pointeur sur une structure msg_t
 void free_buf(msg_t *buf)
 {
     free(buf);
 }
 
+// Ajoute un utilisateur dans la liste
 user_t *add_user(struct sockaddr_in *sa)
 {
 	user_t *user = NULL;
@@ -180,6 +182,7 @@ user_t *add_user(struct sockaddr_in *sa)
 	return user;
 }
 
+// Met à jour des informations réseau d'un utilisateur
 void get_node_info(user_t *user, struct sockaddr_in *sa)
 {
 	int port = sa->sin_port;
@@ -187,11 +190,13 @@ void get_node_info(user_t *user, struct sockaddr_in *sa)
 	sprintf(user->node_info, "%s:%d", ip, port);
 }
 
+// Supprime un utilisateur de la liste
 void del_user(user_t *user)
 {
 	TAILQ_REMOVE(&users_list, user, lh);
 }
 
+// Retourne l'utilisateur de la liste correspondant à la socket
 user_t *lookup_user(struct sockaddr_in *sa)
 {
     user_t *user = NULL;
@@ -204,6 +209,7 @@ user_t *lookup_user(struct sockaddr_in *sa)
     return NULL;
 }
 
+// Affiche tous les utilisateurs de la liste
 void show_users()
 {
 	user_t *user = NULL;
@@ -217,6 +223,7 @@ void show_users()
     }
 }
 
+// Reçoit les messages
 void *receive_thread(void *arg)
 {
 	while (continuer)
@@ -225,30 +232,29 @@ void *receive_thread(void *arg)
         unsigned int addrlen = sizeof(sender_addr);
         user_t *sender = NULL;
         void *data = malloc(MSG_SIZE);
-        msg_t *msg = get_buf(MT_INVAL);
 
-		if((recvfrom(bcast_sock, data, MSG_SIZE, 0, (struct sockaddr *) &sender_addr, &addrlen)) != MSG_SIZE)
+		if((recvfrom(bcast_sock, data, MSG_SIZE, 0, (struct sockaddr *) &sender_addr, &addrlen)) != MSG_SIZE)	// Réception du message et des informations connexes
 			printf("Erreur de reception %d\n", errno);
 		else
 		{
-			sender = lookup_user(&sender_addr);
+			sender = lookup_user(&sender_addr);	// Vérification de l'émetteur
 			if (sender == NULL)
 				sender = add_user(&sender_addr);
 
-			process_received_msg(sender, (msg_t*) data);
+			process_received_msg(sender, (msg_t*) data);	// Traitement du message
 		}
         free(data);
-        free(msg);
     }
     return NULL;
 }
 
+// Traite les messages reçus
 void process_received_msg(user_t *user, msg_t *msg)
 {
     user_t *userq = NULL;
     TAILQ_FOREACH(userq, &users_list, lh)
     {
-        if (memcmp(userq, user, sizeof(user_t)) == 0)
+        if (memcmp(userq, user, sizeof(user_t)) == 0)	// Met à jour le dernier message de l'utilisateur émetteur
             user->last_msg = (int)time(NULL);
     }
     switch(msg->type)
@@ -263,7 +269,7 @@ void process_received_msg(user_t *user, msg_t *msg)
             {
                 TAILQ_FOREACH(userq, &users_list, lh)
                 {
-                    if (memcmp(userq, user, sizeof(user_t)) == 0)
+                    if (memcmp(userq, user, sizeof(user_t)) == 0)	// Renomme l'utilisateur
                         strncpy(user->nick, msg->buf, NICK_LEN);
                 }
             }
@@ -279,7 +285,7 @@ void process_received_msg(user_t *user, msg_t *msg)
             {
                 TAILQ_FOREACH(userq, &users_list, lh)
                 {
-                    if (memcmp(userq, user, sizeof(user_t)) == 0)
+                    if (memcmp(userq, user, sizeof(user_t)) == 0)	// Modifie la couleur de l'utilisateur
                         userq->color = atoi(msg->buf);
                 }
             }
@@ -287,7 +293,7 @@ void process_received_msg(user_t *user, msg_t *msg)
 
         case MT_EXIT:
             {
-                del_user(user);
+                del_user(user);	// Supprime l'utilisateur de la liste
             	printf("%s disconnected (by user)\n", user->nick);
             }
             break;
@@ -298,12 +304,14 @@ void process_received_msg(user_t *user, msg_t *msg)
     }
 }
 
+// Envoi un message
 void send_msg(msg_t *data, size_t data_len)
 {
     if(sendto(bcast_sock, data, data_len, 0, (struct sockaddr *) &bcast_addr_in, sizeof(bcast_addr_in)) != MSG_SIZE)
     	printf("Erreur %d lors de l'envoie du message\n", errno);
 }
 
+// Gère l'interaction clavier utilisateur
 void enter_loop(void)
 {
     while (continuer)
@@ -317,7 +325,7 @@ void enter_loop(void)
             if (str[i] == '\n')
                 str[i] = '\0';
         }
-        if (str[0] != '/')
+        if (str[0] != '/')	// Message classique
         {
             msg_t * msg = get_buf(MT_MSG);
     		msg->len = BUF_SIZE;
@@ -325,11 +333,11 @@ void enter_loop(void)
             send_msg(msg, MSG_SIZE);
             free_buf(msg);
         }
-        else
+        else	// Message avec commande spécifique
         {
             switch(str[1])
             {
-            	case 'e':
+            	case 'e':	// Déconnexion
                     {
                         msg_t * msg = get_buf(MT_EXIT);
                         msg->len = BUF_SIZE;
@@ -340,7 +348,7 @@ void enter_loop(void)
                     }
                     break;
 
-                case 'n':
+                case 'n':	// Changement de pseudo
                     {
                         msg_t * msg = get_buf(MT_NICK);
                         msg->len = BUF_SIZE;
@@ -351,7 +359,7 @@ void enter_loop(void)
                     }
                     break;
 
-                case 'c':
+                case 'c':	// Changement de couleur
                     {
                         msg_t * msg = get_buf(MT_COLOR);
                         msg->len = BUF_SIZE;
@@ -362,7 +370,7 @@ void enter_loop(void)
                     }
                     break;
 
-                case 's':
+                case 's':	// Affiche les utilisateurs de la liste
                     {
                         show_users();
                     }
@@ -381,6 +389,7 @@ void enter_loop(void)
     }
 }
 
+// Envoi un message de vie en continue
 void *hello_thread(void *args)
 {
     while (continuer)
@@ -397,12 +406,13 @@ void *hello_thread(void *args)
     return NULL;
 }
 
+// Supprime les utilisateurs sans vie depuis 60 secondes de la liste
 void free_user()
 {
     user_t *user = NULL;
     TAILQ_FOREACH(user, &users_list, lh)
     {
-        if ((int)time(NULL)-user->last_msg > 60)
+        if ((int)time(NULL)-user->last_msg > 60) // Si le dernier message date de plus de 60 secondes
         {
             del_user(user);
             printf("%s disconnected (timeout)\n", user->nick);
